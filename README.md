@@ -233,7 +233,10 @@ struct allocator {
 };
 ```
 
-`release` shrinks the buffer (through `reallocate`) when much of it is unused.
+The writers keep a copy of the allocator (the functions and the context must
+stay valid, not the struct). `release` shrinks the buffer (through
+`reallocate`) when much of it is unused; the buffer it gives up holds a zero
+byte after its `*size` bytes, with your allocator too.
 
 ## The C interface
 

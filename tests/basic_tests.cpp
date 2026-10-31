@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -418,6 +419,67 @@ static void test_allocator() {
   std::free(p);
 }
 
+// An allocator that keeps only the used bytes (as the contract allows) and
+// fills the rest with 'X'.
+static char* strict_reallocate(void*, char* p, size_t used, size_t size) {
+  char* q = static_cast<char*>(std::malloc(size));
+  if (q == nullptr) return nullptr;
+  std::memset(q, 'X', size);
+  if (p != nullptr) {
+    std::memcpy(q, p, used);
+    std::free(p);
+  }
+  return q;
+}
+static void strict_deallocate(void*, char* p) { std::free(p); }
+
+static void test_strict_allocator() {
+  const allocator strict{strict_reallocate, strict_deallocate, nullptr};
+  // 2,500 bytes of JSON string: we reserve about 7.5 kB, write 2,503 bytes of
+  // MessagePack, and shrink the buffer in release.
+  const std::string json = "\"" + std::string(2500, 'a') + "\"";
+  simdjson::padded_string padded(json);
+  msgpack_writer w({}, strict);
+  CHECK(w.write_json(padded).ok());
+  size_t size;
+  char* p = w.release(&size);
+  CHECK(size == 2503);
+  CHECK(p[size] == '\0');
+  CHECK(std::string_view(p + 3, 2500) == std::string(2500, 'a'));
+  std::free(p);
+  // The same for JSON, and for many documents (the buffer grows).
+  json_writer jw({}, strict);
+  std::string mp;
+  CHECK(json_to_msgpack(padded, &mp).ok());
+  for (int i = 0; i < 100; i++) CHECK(jw.write_msgpack_stream(mp.data(), mp.size()).ok());
+  p = jw.release(&size);
+  CHECK(size == 100 * (json.size() + 1));
+  CHECK(p[size] == '\0');
+  CHECK(std::strlen(p) == size);
+  std::free(p);
+}
+
+// The writers copy the allocator: it may go away before them.
+static void test_allocator_lifetime() {
+  std::unique_ptr<msgpack_writer> w;
+  std::unique_ptr<json_writer> jw;
+  {
+    allocator temporary{strict_reallocate, strict_deallocate, nullptr};
+    w.reset(new msgpack_writer({}, temporary));
+    jw.reset(new json_writer({}, temporary));
+    std::memset(&temporary, 0, sizeof(temporary));
+  }
+  std::string big = "[";
+  for (int i = 0; i < 10000; i++) big += (i ? ",\"" : "\"") + std::to_string(i) + "\"";
+  big += "]";
+  simdjson::padded_string padded(big);
+  CHECK(w->write_json(padded).ok());  // grows
+  CHECK(jw->write_msgpack(w->view().data(), w->view().size()).ok());
+  CHECK(jw->view() == big);
+  w.reset();  // deallocates
+  jw.reset();
+}
+
 static void test_c_api() {
   char* out = nullptr;
   size_t length = 0;
@@ -622,6 +684,8 @@ int main() {
   test_ndjson();
   test_round_trip();
   test_allocator();
+  test_strict_allocator();
+  test_allocator_lifetime();
   test_c_api();
   test_random_round_trips();
   test_msgpack_mutations();

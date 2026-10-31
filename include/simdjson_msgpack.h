@@ -24,7 +24,9 @@ struct status {
 };
 
 // Where a writer puts its output, instead of a buffer from malloc: say, in a
-// buffer of a language binding, to hand it over without a copy.
+// buffer of a language binding, to hand it over without a copy. A writer
+// keeps a copy of it (the functions and the context must stay valid, not the
+// struct itself).
 struct allocator {
   // Returns a buffer of at least size bytes that begins with the used first
   // bytes of p (p is null at first), or null if it cannot.
@@ -63,7 +65,8 @@ struct msgpack_options {
 class msgpack_writer {
  public:
   explicit msgpack_writer(const msgpack_options& options = {});
-  // With the allocator, release gives up a buffer from allocator.reallocate.
+  // With the allocator (which we copy), release gives up a buffer from
+  // allocator.reallocate.
   msgpack_writer(const msgpack_options& options, const allocator& allocator);
   ~msgpack_writer();
   msgpack_writer(const msgpack_writer&) = delete;
@@ -82,8 +85,8 @@ class msgpack_writer {
   // The MessagePack written so far.
   std::string_view view() const;
   // Gives up the MessagePack written so far: a buffer from malloc (to free
-  // with free), or from the allocator, of *size bytes. The writer is left
-  // empty.
+  // with free), or from the allocator, of *size bytes, followed by a zero
+  // byte. The writer is left empty.
   char* release(size_t* size);
   // Forgets what was written (keeps the buffer).
   void clear();
@@ -128,6 +131,8 @@ struct json_options {
 class json_writer {
  public:
   explicit json_writer(const json_options& options = {});
+  // With the allocator (which we copy), release gives up a buffer from
+  // allocator.reallocate.
   json_writer(const json_options& options, const allocator& allocator);
   ~json_writer();
   json_writer(const json_writer&) = delete;

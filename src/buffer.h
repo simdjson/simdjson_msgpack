@@ -18,7 +18,13 @@ namespace internal {
 class buffer {
  public:
   buffer() = default;
-  explicit buffer(const allocator* a) : allocator_(a) {}
+  // We copy the allocator: it need not outlive the buffer.
+  explicit buffer(const allocator* a) {
+    if (a != nullptr) {
+      allocator_ = *a;
+      custom_ = true;
+    }
+  }
   buffer(const buffer&) = delete;
   buffer& operator=(const buffer&) = delete;
   ~buffer() { free(data_); }
@@ -40,13 +46,18 @@ class buffer {
   // Sets the size (to at most the size and the room reserved).
   void resize(size_t size) { size_ = size; }
   // Gives up the buffer, followed by a zero byte. We shrink it when much of
-  // it is unused.
+  // it is unused, before we write the zero: an allocator keeps only the used
+  // bytes.
   char* release(size_t* size) {
-    *reserve(1) = '\0';
+    reserve(1);
     if (capacity_ - size_ > 4096 && capacity_ - size_ > size_ / 4) {
       char* p = reallocate(data_, size_ + 1);
-      if (p != nullptr) data_ = p;
+      if (p != nullptr) {
+        data_ = p;
+        capacity_ = size_ + 1;
+      }
     }
+    data_[size_] = '\0';
     char* p = data_;
     *size = size_;
     data_ = nullptr;
@@ -56,15 +67,14 @@ class buffer {
 
  private:
   char* reallocate(char* p, size_t capacity) {
-    return allocator_ == nullptr
-               ? static_cast<char*>(std::realloc(p, capacity))
-               : allocator_->reallocate(allocator_->context, p, size_, capacity);
+    return custom_ ? allocator_.reallocate(allocator_.context, p, size_, capacity)
+                   : static_cast<char*>(std::realloc(p, capacity));
   }
   void free(char* p) {
-    if (allocator_ == nullptr) {
+    if (!custom_) {
       std::free(p);
     } else if (p != nullptr) {
-      allocator_->deallocate(allocator_->context, p);
+      allocator_.deallocate(allocator_.context, p);
     }
   }
   void grow(size_t n) {
@@ -76,7 +86,8 @@ class buffer {
     capacity_ = capacity;
   }
 
-  const allocator* allocator_{nullptr};
+  allocator allocator_{};
+  bool custom_{false};  // allocator_ is the caller's (otherwise: malloc)
   char* data_{nullptr};
   size_t size_{0};
   size_t capacity_{0};
