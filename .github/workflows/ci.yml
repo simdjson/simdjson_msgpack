@@ -1,0 +1,43 @@
+# Builds with CMake and runs the tests: GCC and clang (with sanitizers) on
+# Linux, Apple clang on macOS, MSVC on Windows.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cxx: g++
+          - os: ubuntu-latest
+            cxx: clang++
+            flags: -fsanitize=address,undefined -fno-sanitize-recover=all
+            build_type: Debug
+          - os: ubuntu-latest
+            cxx: clang++
+            flags: -fsanitize=thread
+            build_type: RelWithDebInfo
+          - os: macos-latest
+            cxx: c++
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: bash
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=${{ matrix.build_type || 'Release' }})
+          if [ -n "${{ matrix.cxx }}" ]; then args+=(-DCMAKE_CXX_COMPILER=${{ matrix.cxx }}); fi
+          if [ -n "${{ matrix.flags }}" ]; then args+=("-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"); fi
+          cmake -B build "${args[@]}"
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type || 'Release' }} -j 4
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.build_type || 'Release' }} --output-on-failure
