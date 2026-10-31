@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 
@@ -34,6 +35,16 @@ double best_time(int rounds, F fn) {
     best = std::min(best, std::chrono::duration<double>(clock::now() - t0).count() / calls);
   }
   return best;
+}
+
+// Keeps the core busy for about a second, so that the first measures do not
+// run at a low frequency.
+inline void warm_up() {
+  auto t0 = std::chrono::steady_clock::now();
+  volatile uint64_t x = 1;
+  while (std::chrono::steady_clock::now() - t0 < std::chrono::seconds(1)) {
+    for (int i = 0; i < 1000; i++) x = x * 6364136223846793005ULL + 1;
+  }
 }
 
 inline std::string basename_of(const char* path) {

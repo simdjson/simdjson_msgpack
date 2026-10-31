@@ -66,11 +66,12 @@ simdjson_inline uint8_t* put_header(uint8_t* p, const header& h) {
 
 // Puts the smallest headers in place in the document [begin, end), moving
 // back what follows them; returns the new end.
-uint8_t* compact(uint8_t* begin, uint8_t* end, const std::vector<header>& headers) {
-  if (headers.empty()) return end;
+uint8_t* compact(uint8_t* begin, uint8_t* end, const header* headers, size_t count) {
+  if (count == 0) return end;
   uint8_t* out = begin + headers[0].offset;
   const uint8_t* in = out;
-  for (const header& h : headers) {
+  for (size_t i = 0; i < count; i++) {
+    const header& h = headers[i];
     const uint8_t* at = begin + h.offset;
     const size_t n = size_t(at - in);
     std::memmove(out, in, n);
@@ -93,10 +94,10 @@ class encoder {
   template <typename document>
   error_code write(document& doc, uint8_t* out, uint8_t** end) {
     begin_ = out_ = out;
-    headers_.clear();
+    count_ = 0;
     error_code e = any(doc);
     if (e) return e;
-    *end = compact(begin_, out_, headers_);
+    *end = compact(begin_, out_, headers_.data(), count_);
     return SUCCESS;
   }
 
@@ -164,9 +165,8 @@ class encoder {
     const size_t h = open(false);
     uint64_t count = 0;
     for (auto child : a) {
-      ondemand::value v;
-      SIMDJSON_TRY(child.get(v));
-      SIMDJSON_TRY(element(v));
+      SIMDJSON_TRY(child.error());
+      SIMDJSON_TRY(element(in_place(child)));
       count++;
     }
     return close(h, count);
@@ -176,8 +176,8 @@ class encoder {
     const size_t h = open(true);
     uint64_t count = 0;
     for (auto f : o) {
-      ondemand::field field;
-      SIMDJSON_TRY(std::move(f).get(field));
+      SIMDJSON_TRY(f.error());
+      ondemand::field& field = in_place(f);
       SIMDJSON_TRY(string(field.key()));
       SIMDJSON_TRY(element(field.value()));
       count++;
@@ -185,9 +185,21 @@ class encoder {
     return close(h, count);
   }
 
+  // The value in a result (which has no error), without a copy: GCC copies
+  // results through the stack with stores that loads cannot forward from.
+  template <typename T>
+  static simdjson_inline T& in_place(simdjson_result<T>& r) {
+    return const_cast<T&>(r.value_unsafe());
+  }
+
   simdjson_inline size_t open(bool is_map) {
-    const size_t h = headers_.size();
-    headers_.push_back(header{size_t(out_ - begin_), 0, is_map});
+    // We write the fields in place, rather than push a header built on the
+    // stack (GCC would copy it with a load that cannot be forwarded to).
+    const size_t h = count_++;
+    if (simdjson_unlikely(h == headers_.size())) headers_.resize(headers_.empty() ? 64 : 2 * h);
+    header& slot = headers_[h];
+    slot.offset = size_t(out_ - begin_);
+    slot.is_map = is_map;
     out_ += header_room;
     return h;
   }
@@ -280,9 +292,10 @@ class encoder {
   simdjson_inline error_code string(ondemand::raw_json_string s) {
     uint8_t* const at = out_;
     uint8_t* end = at + 1;
-    std::string_view v;
-    SIMDJSON_TRY(parser_.unescape(s, end).get(v));
-    const size_t n = v.size();
+    // unescape moves end past the string: we take only the error (copying
+    // the whole result costs GCC a store-forwarding stall).
+    SIMDJSON_TRY(parser_.unescape(s, end).error());
+    const size_t n = size_t(end - (at + 1));
     if (simdjson_likely(n < 32)) {
       *at = uint8_t(0xa0 | n);
     } else if (n <= 0xff) {
@@ -307,7 +320,8 @@ class encoder {
   }
 
   ondemand::parser& parser_;
-  std::vector<header>& headers_;
+  std::vector<header>& headers_;  // the first count_ are in use
+  size_t count_{0};
   const msgpack_options& options_;
   uint8_t* begin_{nullptr};
   uint8_t* out_{nullptr};

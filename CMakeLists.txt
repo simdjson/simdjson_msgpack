@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
+# (SIMDJSON_MSGPACK_COMPETITION needs CMake 3.18.)
 project(simdjson_msgpack VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -48,22 +49,21 @@ if(SIMDJSON_MSGPACK_BENCHMARKS)
   add_executable(bench benchmarks/bench.cpp)
   target_link_libraries(bench PRIVATE simdjson_msgpack)
   if(SIMDJSON_MSGPACK_COMPETITION)
+    # Header-only (or without a CMakeLists.txt we want): SOURCE_SUBDIR names a
+    # directory that does not exist, so that FetchContent only downloads them.
     FetchContent_Declare(nlohmann_json
       URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE SOURCE_SUBDIR none)
     FetchContent_Declare(yyjson
       URL https://github.com/ibireme/yyjson/archive/refs/tags/0.12.0.tar.gz
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     FetchContent_Declare(rapidjson
       URL https://github.com/Tencent/rapidjson/archive/24b5e7a8b27f42fa16b96fc70aade9106cf7102f.tar.gz
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE SOURCE_SUBDIR none)
     FetchContent_Declare(mpack
       URL https://github.com/ludocode/mpack/releases/download/v1.1.1/mpack-amalgamation-1.1.1.tar.gz
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    FetchContent_MakeAvailable(yyjson)
-    FetchContent_Populate(nlohmann_json)  # header only
-    FetchContent_Populate(rapidjson)      # header only
-    FetchContent_Populate(mpack)
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE SOURCE_SUBDIR none)
+    FetchContent_MakeAvailable(yyjson nlohmann_json rapidjson mpack)
     add_library(mpack STATIC ${mpack_SOURCE_DIR}/src/mpack/mpack.c)
     target_include_directories(mpack PUBLIC ${mpack_SOURCE_DIR}/src/mpack)
     target_compile_definitions(mpack PUBLIC MPACK_EXTENSIONS=1)

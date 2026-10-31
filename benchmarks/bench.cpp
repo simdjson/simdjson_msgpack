@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
   std::printf("%-28s %10s %10s %14s %14s\n", "file", "JSON MB", "msgpack MB", "to msgpack", "to JSON");
+  warm_up();
   for (const char* file : files) {
     simdjson::padded_string json;
     if (simdjson::padded_string::load(file).get(json)) {

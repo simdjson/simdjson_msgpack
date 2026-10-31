@@ -516,6 +516,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "usage: %s [--rounds N] file.json...\n", argv[0]);
     return EXIT_FAILURE;
   }
+  warm_up();
   for (const char* file : files) {
     simdjson::padded_string json;
     if (simdjson::padded_string::load(file).get(json)) {
