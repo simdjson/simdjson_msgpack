@@ -101,6 +101,40 @@ simdjson_inline char* escape_with_quotes(char* out, const char* in, size_t n, bo
   return out;
 }
 
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define SIMDJSON_MSGPACK_SHORT_STRINGS 0
+#else
+#define SIMDJSON_MSGPACK_SHORT_STRINGS 1
+#endif
+
+#if SIMDJSON_MSGPACK_SHORT_STRINGS
+// Bytes that need escaping (or are not ASCII), as their high bits. A byte
+// may be flagged wrongly only above (at a higher address than) a byte that
+// is rightly flagged.
+simdjson_inline uint64_t flags(uint64_t word) {
+  auto has_zero = [](uint64_t v) { return (v - ones) & ~v; };
+  const uint64_t control = (word - 0x20 * ones) & ~word;  // a byte < 0x20
+  return (control | has_zero(word ^ ('"' * ones)) | has_zero(word ^ ('\\' * ones)) | word) & highs;
+}
+
+// A string of at most 16 bytes of ASCII that needs no escaping, between
+// quotes: we may read 16 bytes at in and write 18 at out. Returns null if a
+// byte needs escaping or is not ASCII (little endian only).
+simdjson_inline char* short_string(char* out, const char* in, size_t n) {
+  uint64_t w0, w1;
+  std::memcpy(&w0, in, 8);
+  std::memcpy(&w1, in + 8, 8);
+  // The high bits of the bytes below n.
+  const uint64_t m0 = n >= 8 ? highs : highs & ((uint64_t(1) << (8 * n)) - 1);
+  const uint64_t m1 = n >= 16 ? highs : n <= 8 ? 0 : highs & ((uint64_t(1) << (8 * (n - 8))) - 1);
+  if (((flags(w0) & m0) | (flags(w1) & m1)) != 0) return nullptr;
+  out[0] = '"';
+  std::memcpy(out + 1, in, 16);
+  out[1 + n] = '"';
+  return out + 2 + n;
+}
+#endif
+
 // Base64 (standard alphabet, with padding) of in[0, n), between quotes. out
 // must have room for 2 + 4 * ((n + 2) / 3) bytes.
 char* base64_with_quotes(char* out, const uint8_t* in, size_t n) {
@@ -138,6 +172,7 @@ class decoder {
 
   // Writes the next value; returns false on error (see message()).
   bool value() {
+    room(element_room);
     bool ok = any(0);
     sync();
     return ok;
@@ -154,6 +189,14 @@ class decoder {
   }
 
  private:
+  // We check the room left in the output once per element of an array or a
+  // map (not for every token): element_room bytes hold a comma, a scalar key
+  // between quotes, a colon and a scalar value (at most 1 + 42 + 1 + 40).
+  // Strings and binary values make room for themselves and after_room more
+  // bytes (for the colon and the value that may follow a key).
+  static constexpr size_t element_room = 96;
+  static constexpr size_t after_room = 48;
+
   // Makes room for n bytes of output.
   simdjson_inline void room(size_t n) {
     if (simdjson_unlikely(size_t(limit_ - out_) < n)) {
@@ -173,11 +216,9 @@ class decoder {
   simdjson_inline bool has(size_t n) const { return size_t(end_ - in_) >= n; }
 
   simdjson_inline void put_uint(uint64_t x) {
-    room(20);
     out_ = simdjson::internal::write_uint_jeaiii(out_, x);
   }
   simdjson_inline void put_int(int64_t x) {
-    room(21);
     const bool negative = x < 0;
     *out_ = '-';
     out_ += negative;
@@ -190,6 +231,8 @@ class decoder {
   template <typename F>
   simdjson_inline void put_float(F x) {
     constexpr size_t n = 40;  // zmij needs at most 34 bytes, ".0" 2 more
+    // element_room covers it, but GCC writes floats 10% to 15% faster with
+    // the check (its code for zmij comes out otherwise).
     room(n);
     if (!std::isfinite(x)) {
       std::memcpy(out_, "null", 4);
@@ -197,16 +240,22 @@ class decoder {
       return;
     }
     char* end = zmij::write(out_, n, x);
-    // zmij writes fixed notation for integers below 1e16 (float: 1e7 or so)
-    // without a decimal point: we look for one, or an exponent.
-    if (std::find_if(out_, end, [](char c) { return c == '.' || c == 'e'; }) == end) {
+    // zmij writes integers without a decimal point in fixed notation: below
+    // 1e16 for a double (as Python's repr). For a float, we look for a
+    // decimal point or an exponent.
+    bool integer;
+    SIMDJSON_IF_CONSTEXPR(sizeof(F) == 8) {
+      integer = x == std::floor(x) && std::fabs(x) < 1e16;
+    } else {
+      integer = std::find_if(out_, end, [](char c) { return c == '.' || c == 'e'; }) == end;
+    }
+    if (integer) {
       std::memcpy(end, ".0", 2);
       end += 2;
     }
     out_ = end;
   }
   simdjson_inline void put_raw(const char* s, size_t n) {
-    room(n);
     std::memcpy(out_, s, n);
     out_ += n;
   }
@@ -214,7 +263,18 @@ class decoder {
   simdjson_inline bool string(const uint8_t* at, size_t n) {
     if (simdjson_unlikely(!has(n))) return fail("truncated string", at);
     const char* s = reinterpret_cast<const char*>(in_);
-    room(2 + 6 * n);
+    room(18 + 6 * n + after_room);
+#if SIMDJSON_MSGPACK_SHORT_STRINGS
+    // Most strings (keys) are short, ASCII and need no escaping.
+    if (n <= 16 && size_t(end_ - in_) >= 16) {
+      char* end = short_string(out_, s, n);
+      if (simdjson_likely(end != nullptr)) {
+        out_ = end;
+        in_ += n;
+        return true;
+      }
+    }
+#endif
     bool non_ascii;
     out_ = escape_with_quotes(out_, s, n, &non_ascii);
     if (non_ascii && options_.validate_utf8 && !simdjson::validate_utf8(s, n)) {
@@ -226,7 +286,7 @@ class decoder {
   bool binary(const uint8_t* at, size_t n) {
     if (!options_.binary_as_base64) return fail("binary value (binary_as_base64 is off)", at);
     if (!has(n)) return fail("truncated binary value", at);
-    room(2 + 4 * ((n + 2) / 3));
+    room(2 + 4 * ((n + 2) / 3) + after_room);
     out_ = base64_with_quotes(out_, in_, n);
     in_ += n;
     return true;
@@ -242,13 +302,10 @@ class decoder {
 
   bool array(const uint8_t* at, size_t n, size_t depth) {
     if (depth >= options_.max_depth) return fail("nested too deeply", at);
-    room(2);
     *out_++ = '[';
     for (size_t i = 0; i < n; i++) {
-      if (i != 0) {
-        room(1);
-        *out_++ = ',';
-      }
+      room(element_room);
+      if (i != 0) *out_++ = ',';
       if (!any(depth + 1)) return false;
     }
     room(1);
@@ -257,15 +314,11 @@ class decoder {
   }
   bool map(const uint8_t* at, size_t n, size_t depth) {
     if (depth >= options_.max_depth) return fail("nested too deeply", at);
-    room(2);
     *out_++ = '{';
     for (size_t i = 0; i < n; i++) {
-      if (i != 0) {
-        room(1);
-        *out_++ = ',';
-      }
+      room(element_room);
+      if (i != 0) *out_++ = ',';
       if (!key()) return false;
-      room(1);
       *out_++ = ':';
       if (!any(depth + 1)) return false;
     }

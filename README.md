@@ -305,25 +305,25 @@ JSON to MessagePack:
 
 | file | simdjson_msgpack | simdjson DOM | yyjson | RapidJSON + mpack | nlohmann::json |
 |---|---|---|---|---|---|
-| twitter | **2.29** / **2.09** | 1.86 / 1.80 | 1.40 / 1.40 | 0.49 / 0.44 | 0.10 / 0.10 |
-| citm_catalog | **1.97** / **1.96** | 1.88 / 1.88 | 1.38 / 1.38 | 0.75 / 0.74 | 0.15 / 0.14 |
-| canada | **0.70** / **0.64** | 0.45 / 0.44 | 0.41 / 0.41 | 0.22 / 0.19 | 0.06 / 0.06 |
-| gsoc-2018 | **3.19** / **3.03** | 2.94 / 2.85 | 1.65 / 1.65 | 0.50 / 0.41 | 0.16 / 0.20 |
-| github_events | **2.48** / **2.19** | 2.12 / 2.00 | 1.49 / 1.51 | 0.46 / 0.38 | 0.10 / 0.11 |
+| twitter | **2.30** / **2.10** | 1.86 / 1.87 | 1.40 / 1.39 | 0.49 / 0.44 | 0.10 / 0.10 |
+| citm_catalog | **1.97** / **1.92** | 1.88 / 1.91 | 1.38 / 1.37 | 0.75 / 0.74 | 0.15 / 0.14 |
+| canada | **0.69** / **0.64** | 0.45 / 0.44 | 0.41 / 0.41 | 0.22 / 0.19 | 0.06 / 0.06 |
+| gsoc-2018 | **3.16** / **3.03** | 2.94 / 2.87 | 1.67 / 1.62 | 0.48 / 0.41 | 0.16 / 0.20 |
+| github_events | **2.44** / **2.19** | 2.13 / 2.10 | 1.50 / 1.50 | 0.47 / 0.40 | 0.10 / 0.11 |
 | mesh | **0.71** / **0.62** | 0.40 / 0.38 | 0.35 / 0.34 | 0.29 / 0.30 | 0.07 / 0.07 |
-| marine_ik | **0.71** / **0.65** | 0.46 / 0.45 | 0.40 / 0.41 | 0.33 / 0.34 | 0.07 / 0.07 |
+| marine_ik | **0.70** / **0.65** | 0.46 / 0.45 | 0.40 / 0.41 | 0.34 / 0.34 | 0.07 / 0.07 |
 
 MessagePack to JSON:
 
 | file | simdjson_msgpack | mpack + yyjson | mpack + RapidJSON | nlohmann::json |
 |---|---|---|---|---|
-| twitter | **1.30** / **1.52** | 0.69 / 0.72 | 0.34 / 0.39 | 0.07 / 0.06 |
-| citm_catalog | **0.87** / **0.97** | 0.40 / 0.41 | 0.29 / 0.34 | 0.05 / 0.05 |
-| canada | **0.61** / **0.61** | 0.39 / 0.40 | 0.20 / 0.20 | 0.09 / 0.08 |
-| gsoc-2018 | **2.19** / **2.52** | 1.34 / 1.29 | 0.42 / 0.46 | 0.09 / 0.09 |
-| github_events | **1.52** / **1.85** | 0.84 / 0.87 | 0.36 / 0.41 | 0.07 / 0.07 |
-| mesh | **0.54** / **0.58** | 0.35 / 0.36 | 0.23 / 0.23 | 0.10 / 0.09 |
-| marine_ik | **0.38** / **0.42** | 0.24 / 0.24 | 0.18 / 0.18 | 0.05 / 0.05 |
+| twitter | **1.44** / **1.66** | 0.70 / 0.71 | 0.33 / 0.39 | 0.07 / 0.06 |
+| citm_catalog | **1.02** / **1.13** | 0.41 / 0.41 | 0.29 / 0.34 | 0.05 / 0.05 |
+| canada | **0.66** / **0.63** | 0.39 / 0.40 | 0.20 / 0.20 | 0.09 / 0.08 |
+| gsoc-2018 | **2.29** / **2.61** | 1.25 / 1.29 | 0.42 / 0.46 | 0.09 / 0.09 |
+| github_events | **1.66** / **1.97** | 0.85 / 0.86 | 0.35 / 0.41 | 0.07 / 0.07 |
+| mesh | **0.57** / **0.59** | 0.35 / 0.37 | 0.23 / 0.23 | 0.10 / 0.09 |
+| marine_ik | **0.43** / **0.44** | 0.24 / 0.24 | 0.18 / 0.18 | 0.05 / 0.05 |
 
 What we compare:
 
@@ -339,8 +339,8 @@ What we compare:
 - `bench_competition` also runs the On-Demand code of simdjson's own
   json2msgpack benchmark (`benchmark/json2msgpack`), which does less: every
   number a float64, every string a str 32, every header 5 bytes. Its output
-  is 5% to 81% larger than ours, and we are faster on every file (twitter:
-  1.51 / 1.20 GB/s).
+  is 5% to 81% larger than ours, and we are faster on every file (on twitter, it
+  goes at 1.51 / 1.20 GB/s).
 
 On an Apple M4 Max (Apple clang 17, on AC power), with the first version of
 the library (96bc30b), JSON to MessagePack went at 1.2 GB/s (marine_ik) to
@@ -356,12 +356,13 @@ socket up to 32 threads, then both sockets, in GB/s of JSON:
 
 | threads | JSON to MessagePack | MessagePack to JSON |
 |---|---|---|
-| 1 | 1.4 | 1.1 |
-| 4 | 4.4 | 3.1 |
-| 8 | 6.8 | 4.5 |
-| 16 | 11.6 | 4.5 |
-| 32 | 16.9 | 4.0 |
-| 64 | 19.8 | 3.8 |
+| 1 | 1.4 | 1.2 |
+| 2 | 2.3 | 1.7 |
+| 4 | 4.4 | 3.4 |
+| 8 | 7.8 | 4.5 |
+| 16 | 12.2 | 4.7 |
+| 32 | 16.7 | 4.0 |
+| 64 | 18.9 | 3.3 |
 
 Writing JSON from MessagePack stops scaling at about eight threads: one
 thread must find where the values end (MessagePack has no line ends) before

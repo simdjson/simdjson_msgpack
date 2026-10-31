@@ -135,6 +135,15 @@ static void test_floats() {
   CHECK(to_json("ca3dcccccd") == "0.1");  // float32 0.1, shortest
   CHECK(to_json("ca40000000") == "2.0");
   CHECK(to_json("cb4415af1d78b58c40") == "1e+20");
+  // Integers: fixed notation, with ".0", below 1e16; an exponent from 1e16.
+  CHECK(to_json("cb430c6bf526340000") == "1000000000000000.0");
+  CHECK(to_json("cb4341c37937e07fff") == "9999999999999998.0");
+  CHECK(to_json("cb4341c37937e08000") == "1e+16");
+  CHECK(to_json("cb434aa535d3d0c000") == "1.5e+16");
+  CHECK(to_json("cb441ac53a7e04bcda") == "1.2345678901234568e+20");
+  CHECK(to_json("cbc30c6bf526340000") == "-1000000000000000.0");
+  CHECK(to_json("cb3ee4f8b588e368f1") == "1e-05");
+  CHECK(to_json("cb3f1a36e2eb1c432d") == "0.0001");
 }
 
 static void test_scalars() {
