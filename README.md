@@ -295,33 +295,35 @@ files.
 
 ## Performance
 
-Apple M4 Max (macOS, Apple clang 17), best of ten rounds, in GB/s of JSON:
-read, when writing MessagePack; written (what we write), when writing JSON.
-Files from [simdjson-data](https://github.com/simdjson/simdjson-data).
+Intel Xeon Gold 6338 (Ice Lake, 2 GHz, 3.15 GHz under load), Linux, one core,
+best of ten rounds, in GB/s of JSON: read, when writing MessagePack; written
+(what we write), when writing JSON. Files from
+[simdjson-data](https://github.com/simdjson/simdjson-data). Each cell: GCC 11
+/ clang 21.
 
 JSON to MessagePack:
 
-| file | simdjson_msgpack | simdjson DOM | yyjson | RapidJSON + mpack | nlohmann::json | simdjson benchmark* |
-|---|---|---|---|---|---|---|
-| twitter | **3.18** | 2.81 | 2.85 | 0.49 | 0.19 | 3.51 |
-| citm_catalog | 3.29 | **3.63** | 3.37 | 1.24 | 0.23 | 4.02 |
-| canada | **1.28** | 0.96 | 0.90 | 0.37 | 0.14 | 1.47 |
-| gsoc-2018 | **4.51** | 4.37 | 3.34 | 0.28 | 0.31 | 5.46 |
-| github_events | **3.37** | 3.05 | 2.25 | 0.40 | 0.21 | 4.01 |
-| mesh | **1.40** | 0.83 | 0.73 | 0.34 | 0.14 | 1.46 |
-| marine_ik | **1.23** | 0.95 | 0.87 | 0.56 | 0.14 | 1.37 |
+| file | simdjson_msgpack | simdjson DOM | yyjson | RapidJSON + mpack | nlohmann::json |
+|---|---|---|---|---|---|
+| twitter | **2.29** / **2.09** | 1.86 / 1.80 | 1.40 / 1.40 | 0.49 / 0.44 | 0.10 / 0.10 |
+| citm_catalog | **1.97** / **1.96** | 1.88 / 1.88 | 1.38 / 1.38 | 0.75 / 0.74 | 0.15 / 0.14 |
+| canada | **0.70** / **0.64** | 0.45 / 0.44 | 0.41 / 0.41 | 0.22 / 0.19 | 0.06 / 0.06 |
+| gsoc-2018 | **3.19** / **3.03** | 2.94 / 2.85 | 1.65 / 1.65 | 0.50 / 0.41 | 0.16 / 0.20 |
+| github_events | **2.48** / **2.19** | 2.12 / 2.00 | 1.49 / 1.51 | 0.46 / 0.38 | 0.10 / 0.11 |
+| mesh | **0.71** / **0.62** | 0.40 / 0.38 | 0.35 / 0.34 | 0.29 / 0.30 | 0.07 / 0.07 |
+| marine_ik | **0.71** / **0.65** | 0.46 / 0.45 | 0.40 / 0.41 | 0.33 / 0.34 | 0.07 / 0.07 |
 
 MessagePack to JSON:
 
 | file | simdjson_msgpack | mpack + yyjson | mpack + RapidJSON | nlohmann::json |
 |---|---|---|---|---|
-| twitter | **3.10** | 1.24 | 0.47 | 0.13 |
-| citm_catalog | **1.85** | 0.69 | 0.64 | 0.11 |
-| canada | **1.88** | 0.72 | 0.37 | 0.16 |
-| gsoc-2018 | **6.62** | 2.74 | 1.68 | 0.16 |
-| github_events | **3.95** | 1.53 | 1.18 | 0.13 |
-| mesh | **1.44** | 0.63 | 0.43 | 0.16 |
-| marine_ik | **0.95** | 0.39 | 0.33 | 0.10 |
+| twitter | **1.30** / **1.52** | 0.69 / 0.72 | 0.34 / 0.39 | 0.07 / 0.06 |
+| citm_catalog | **0.87** / **0.97** | 0.40 / 0.41 | 0.29 / 0.34 | 0.05 / 0.05 |
+| canada | **0.61** / **0.61** | 0.39 / 0.40 | 0.20 / 0.20 | 0.09 / 0.08 |
+| gsoc-2018 | **2.19** / **2.52** | 1.34 / 1.29 | 0.42 / 0.46 | 0.09 / 0.09 |
+| github_events | **1.52** / **1.85** | 0.84 / 0.87 | 0.36 / 0.41 | 0.07 / 0.07 |
+| mesh | **0.54** / **0.58** | 0.35 / 0.36 | 0.23 / 0.23 | 0.10 / 0.09 |
+| marine_ik | **0.38** / **0.42** | 0.24 / 0.24 | 0.18 / 0.18 | 0.05 / 0.05 |
 
 What we compare:
 
@@ -334,26 +336,42 @@ What we compare:
 - mpack + RapidJSON: mpack's node tree, written with RapidJSON's `Writer`
   (as msgpack-tools' msgpack2json does). mpack + yyjson: mpack's node tree,
   to a yyjson mutable document, written with `yyjson_mut_write`.
-- \*simdjson benchmark: the On-Demand code of simdjson's own json2msgpack
-  benchmark (`benchmark/json2msgpack`), which does less: every number is a
-  float64, every string a str 32, every header 5 bytes. Its output is 5% to
-  81% larger than ours (citm_catalog: 592 kB against 342 kB), and it is not a
-  library (no errors, no NDJSON). Putting the smallest headers in place costs
-  us up to 13% (citm_catalog), next to writing 5-byte headers.
+- `bench_competition` also runs the On-Demand code of simdjson's own
+  json2msgpack benchmark (`benchmark/json2msgpack`), which does less: every
+  number a float64, every string a str 32, every header 5 bytes. Its output
+  is 5% to 81% larger than ours, and we are faster on every file (twitter:
+  1.51 / 1.20 GB/s).
 
-Newline-delimited JSON, one hour of [GH Archive](https://www.gharchive.org/)
-(886 MB, `curl -sSfL https://data.gharchive.org/2024-03-13-12.json.gz | gunzip > gharchive.ndjson`),
-in GB/s of JSON:
+On an Apple M4 Max (Apple clang 17, on AC power), with the first version of
+the library (96bc30b), JSON to MessagePack went at 1.2 GB/s (marine_ik) to
+4.5 GB/s (gsoc-2018), ahead of yyjson on six files of seven (citm_catalog:
+3.29 against 3.37 GB/s, before the changes for GCC), and MessagePack to JSON
+at 0.95 to 6.6 GB/s, 2.4 to 4.5 times as fast as mpack + yyjson.
+
+Newline-delimited JSON on several threads: one hour of
+[GH Archive](https://www.gharchive.org/) (886 MB,
+`curl -sSfL https://data.gharchive.org/2024-03-13-12.json.gz | gunzip > gharchive.ndjson`),
+same machine (two sockets of 32 cores), GCC 11, one thread per core of one
+socket up to 32 threads, then both sockets, in GB/s of JSON:
 
 | threads | JSON to MessagePack | MessagePack to JSON |
 |---|---|---|
-| 1 | 2.7 | 3.1 |
-| 4 | 5.9 | 8.5 |
-| 8 | 11.0 | 9.0 |
-| 14 | 13.0 | 9.0 |
+| 1 | 1.4 | 1.1 |
+| 4 | 4.4 | 3.1 |
+| 8 | 6.8 | 4.5 |
+| 16 | 11.6 | 4.5 |
+| 32 | 16.9 | 4.0 |
+| 64 | 19.8 | 3.8 |
 
-Writing JSON on many threads is limited, beyond eight threads, by the one
-thread that finds where the values end.
+Writing JSON from MessagePack stops scaling at about eight threads: one
+thread must find where the values end (MessagePack has no line ends) before
+the others can write them.
+
+The machine reaches its turbo frequency only after a few seconds of load: we
+run a throwaway benchmark first. With GCC, we force the inlining of the
+array and object loops, and avoid copying simdjson results: GCC otherwise
+copies On-Demand iterators through the stack with stores that loads cannot
+forward from, which made it up to 2.4 times slower.
 
 To run them:
 
