@@ -66,7 +66,7 @@ With CMake, the `simdjson_msgpack` target brings simdjson with it:
 include(FetchContent)
 FetchContent_Declare(simdjson_msgpack
   GIT_REPOSITORY https://github.com/simdjson/simdjson_msgpack.git
-  GIT_TAG main)
+  GIT_TAG v0.1.1)
 set(SIMDJSON_MSGPACK_TESTS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_MSGPACK_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_MSGPACK_EXAMPLES OFF CACHE BOOL "" FORCE)

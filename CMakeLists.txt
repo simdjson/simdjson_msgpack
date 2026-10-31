@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 # (SIMDJSON_MSGPACK_COMPETITION needs CMake 3.18.)
-project(simdjson_msgpack VERSION 0.1.0 LANGUAGES CXX)
+project(simdjson_msgpack VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
