@@ -1,4 +1,5 @@
 // Tests without dependencies: we check the bytes we write.
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -522,6 +523,69 @@ static void test_threads_growing() {
   CHECK(j8.view().size() == 2 * j1.view().size());
 }
 
+// An allocator that fails at its call number fail_at, freeing p as it fails
+// (as a Python bytes object does): the writers must forget p, report "out of
+// memory", and stay usable.
+struct failing_context {
+  std::atomic<int> calls{0};
+  int fail_at = 0;
+};
+static char* failing_reallocate(void* context, char* p, size_t used, size_t size) {
+  failing_context& c = *static_cast<failing_context*>(context);
+  if (++c.calls == c.fail_at) {
+    std::free(p);
+    return nullptr;
+  }
+  return strict_reallocate(nullptr, p, used, size);
+}
+
+static void test_allocator_failures() {
+  std::string ndjson;
+  for (int i = 0; i < 20000; i++) {
+    ndjson += "[1.5,2.5,3.5,0.1,-7.25,1e-7," + std::to_string(i) + ".5]\n";
+  }
+  simdjson::padded_string padded(ndjson);
+  std::string expected, json_expected;
+  CHECK(ndjson_to_msgpack(padded, &expected).ok());
+  CHECK(msgpack_to_ndjson(expected.data(), expected.size(), &json_expected).ok());
+  for (size_t threads : {size_t(1), size_t(8)}) {
+    for (int fail_at = 1; fail_at <= 16; fail_at++) {
+      failing_context context;
+      context.fail_at = fail_at;
+      const allocator failing{failing_reallocate, strict_deallocate, &context};
+      msgpack_options options;
+      options.threads = threads;
+      options.block_size = 4096;
+      msgpack_writer w(options, failing);
+      status s = w.write_ndjson(padded);
+      CHECK(s.ok() ? w.view() == expected : s.message == "out of memory" && w.view().empty());
+      w.clear();
+      CHECK(w.write_ndjson(padded).ok());  // usable again
+      CHECK(w.view() == expected);
+      json_options joptions;
+      joptions.threads = threads;
+      joptions.block_size = 4096;
+      context.calls = 0;
+      json_writer jw(joptions, failing);
+      s = jw.write_msgpack_stream(expected.data(), expected.size());
+      CHECK(s.ok() ? jw.view() == json_expected : s.message == "out of memory" && jw.view().empty());
+      jw.clear();
+      CHECK(jw.write_msgpack_stream(expected.data(), expected.size()).ok());
+      CHECK(jw.view() == json_expected);
+    }
+  }
+  // The allocator cannot shrink the buffer in release: null, the buffer lost.
+  failing_context context;
+  context.fail_at = 2;  // the first call reserves, the second shrinks
+  const allocator failing{failing_reallocate, strict_deallocate, &context};
+  msgpack_writer w({}, failing);
+  simdjson::padded_string text("\"" + std::string(2500, 'a') + "\"");
+  CHECK(w.write_json(text).ok());
+  size_t size = 1;
+  CHECK(w.release(&size) == nullptr && size == 0);
+  CHECK(w.view().empty());
+}
+
 static void test_c_api() {
   char* out = nullptr;
   size_t length = 0;
@@ -729,6 +793,7 @@ int main() {
   test_strict_allocator();
   test_allocator_lifetime();
   test_threads_growing();
+  test_allocator_failures();
   test_c_api();
   test_random_round_trips();
   test_msgpack_mutations();

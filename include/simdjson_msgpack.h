@@ -29,7 +29,9 @@ struct status {
 // struct itself).
 struct allocator {
   // Returns a buffer of at least size bytes that begins with the used first
-  // bytes of p (p is null at first), or null if it cannot.
+  // bytes of p (p is null at first), or null if it cannot. After a null, p
+  // is the allocator's (to free, or not): the writer forgets it, with what it
+  // held, and the write fails with "out of memory".
   char* (*reallocate)(void* context, char* p, size_t used, size_t size);
   // Frees p (a buffer from reallocate that release did not give up).
   void (*deallocate)(void* context, char* p);
@@ -86,7 +88,8 @@ class msgpack_writer {
   std::string_view view() const;
   // Gives up the MessagePack written so far: a buffer from malloc (to free
   // with free), or from the allocator, of *size bytes, followed by a zero
-  // byte. The writer is left empty.
+  // byte. The writer is left empty. Throws std::bad_alloc, or returns null if
+  // the allocator cannot shrink the buffer (out of memory).
   char* release(size_t* size);
   // Forgets what was written (keeps the buffer).
   void clear();
@@ -149,7 +152,8 @@ class json_writer {
   std::string_view view() const;
   // Gives up the JSON written so far: a buffer from malloc (to free with
   // free), or from the allocator, of *size bytes, followed by a zero byte.
-  // The writer is left empty.
+  // The writer is left empty. Throws std::bad_alloc, or returns null if the
+  // allocator cannot shrink the buffer (out of memory).
   char* release(size_t* size);
   void clear();
 

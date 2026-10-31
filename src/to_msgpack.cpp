@@ -474,6 +474,7 @@ struct msgpack_writer::impl {
         failed = true;
       }
     });
+    if (placed.lost()) throw std::bad_alloc();  // the output itself: no second try
     if (failed) return false;
     placed.finish(n);
     size_t documents = 0;

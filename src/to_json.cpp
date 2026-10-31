@@ -661,6 +661,7 @@ struct json_writer::impl {
       if (w == 0) find_blocks();
       write_blocks(w);
     });
+    if (placed.lost()) throw std::bad_alloc();  // the output itself: no second try
     if (state.load() == failed) return false;
     const size_t n = found.load();
     placed.finish(n);

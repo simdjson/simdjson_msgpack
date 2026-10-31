@@ -43,11 +43,13 @@ class buffer {
     std::memcpy(reserve(n), p, n);
     size_ += n;
   }
-  // Sets the size (to at most the size and the room reserved).
-  void resize(size_t size) { size_ = size; }
+  // Sets the size (to at most the size and the room reserved; at most 0 once
+  // the buffer is lost).
+  void resize(size_t size) { size_ = size < capacity_ ? size : capacity_; }
   // Gives up the buffer, followed by a zero byte. We shrink it when much of
   // it is unused, before we write the zero: an allocator keeps only the used
   // bytes.
+  // Null (and *size 0) if the allocator cannot shrink it: it is lost.
   char* release(size_t* size) {
     reserve(1);
     if (capacity_ - size_ > 4096 && capacity_ - size_ > size_ / 4) {
@@ -55,6 +57,10 @@ class buffer {
       if (p != nullptr) {
         data_ = p;
         capacity_ = size_ + 1;
+      } else if (custom_) {
+        lose();
+        *size = 0;
+        return nullptr;
       }
     }
     data_[size_] = '\0';
@@ -81,9 +87,19 @@ class buffer {
     size_t capacity = capacity_ < 4096 ? 4096 : capacity_ * 2;
     if (capacity - size_ < n) capacity = size_ + n;
     char* p = reallocate(data_, capacity);
-    if (p == nullptr) throw std::bad_alloc();
+    if (p == nullptr) {
+      lose();
+      throw std::bad_alloc();
+    }
     data_ = p;
     capacity_ = capacity;
+  }
+  // The allocator could not reallocate data_: an allocator now owns it (and
+  // may have freed it); realloc left it to us.
+  void lose() {
+    if (!custom_) std::free(data_);
+    data_ = nullptr;
+    size_ = capacity_ = 0;
   }
 
   allocator allocator_{};

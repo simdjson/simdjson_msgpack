@@ -101,32 +101,40 @@ class ordered_output {
   }
   // Whether the offset of block i is known.
   bool placed(size_t i) const { return i < known_.load(std::memory_order_acquire); }
-  // Copies block i (whose offset is known): n bytes at p. May throw
-  // std::bad_alloc (when the buffer grows).
+  // Copies block i (whose offset is known): n bytes at p. Throws
+  // std::bad_alloc when the buffer cannot grow, then and ever after: an
+  // allocator may have freed the buffer, which we must no longer write.
   void copy(size_t i, const char* p, size_t n) {
     const size_t at = offsets_[i];
     if (n == 0) return;
     bool fits;
     {
       std::shared_lock<std::shared_mutex> lock(mutex_);
-      fits = out_.capacity() - base_ >= at + n;
+      fits = !lost_ && out_.capacity() - base_ >= at + n;
     }
     if (!fits) {
       // No copy is under way (they hold the shared lock): the buffer keeps
       // what has been copied, the first base_ + high_ bytes.
       std::unique_lock<std::shared_mutex> lock(mutex_);
-      if (out_.capacity() - base_ < at + n) {
+      if (!lost_ && out_.capacity() - base_ < at + n) {
         const size_t high = high_.load(std::memory_order_relaxed);
         out_.resize(base_ + high);
-        out_.reserve(at + n - std::min(high, at + n));
+        try {
+          out_.reserve(at + n - std::min(high, at + n));
+        } catch (...) {
+          lost_ = true;
+        }
       }
     }
     std::shared_lock<std::shared_mutex> lock(mutex_);
+    if (lost_) throw std::bad_alloc();
     std::memcpy(out_.data() + base_ + at, p, n);
     size_t high = high_.load(std::memory_order_relaxed);
     while (high < at + n && !high_.compare_exchange_weak(high, at + n)) {
     }
   }
+  // Whether the buffer could not grow (once the threads are done).
+  bool lost() const { return lost_; }
   // Sets the size of the buffer, once the blocks [0, blocks) are copied.
   void finish(size_t blocks) { out_.resize(base_ + offsets_[blocks]); }
 
@@ -140,6 +148,7 @@ class ordered_output {
   std::atomic<size_t> known_{0};       // the blocks whose offsets are known
   std::mutex prefix_;
   std::shared_mutex mutex_;  // copies (shared) against growth (exclusive)
+  bool lost_{false};         // the buffer could not grow (under mutex_)
   std::atomic<size_t> high_{0};  // the end of what has been copied
 };
 
