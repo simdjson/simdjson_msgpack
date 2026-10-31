@@ -408,11 +408,17 @@ struct msgpack_writer::impl {
     }
   }
 
-  // What each thread keeps between calls.
+  // What each thread keeps between calls: its parser, and the buffers into
+  // which it converts blocks before copying them in place.
   struct worker {
     ondemand::parser parser;
     std::vector<header> headers;
-    internal::buffer out;
+    std::vector<std::unique_ptr<internal::buffer>> scratch;
+    worker() {
+      for (size_t k = 0; k < internal::slots_per_thread; k++) {
+        scratch.emplace_back(new internal::buffer);
+      }
+    }
   };
   std::vector<std::unique_ptr<worker>> workers;
 
@@ -434,28 +440,42 @@ struct msgpack_writer::impl {
     if (workers.size() < threads) workers.resize(threads);
     for (auto& w : workers) {
       if (!w) w.reset(new worker);
-      w->out.resize(0);
     }
-    std::vector<internal::block_output> blocks(n);
+    // MessagePack is seldom larger than its JSON: one allocation, usually.
+    out.reserve(length);
+    internal::ordered_output placed(out, n);
     std::vector<size_t> counts(n, 0);
     std::atomic<bool> failed{false};
-    internal::parallel_for(n, threads, [&](size_t i, size_t w) {
-      if (failed) return;
-      const size_t begin = block_start(i);
-      const size_t end = std::max(begin, block_start(i + 1));
-      if (begin == end) return;
-      worker& me = *workers[w];
-      const size_t offset = me.out.size();
-      padded_string_view part(data + begin, end - begin, json.capacity() - begin);
-      ndjson_result r = ndjson(part, me.parser, me.headers, me.out);
-      if (r.error) failed = true;
-      counts[i] = r.count;
-      blocks[i] = internal::block_output{w, offset, me.out.size() - offset};
+    std::atomic<size_t> next{0};
+    internal::run_threads(threads, [&](size_t w) {
+      try {
+        worker& me = *workers[w];
+        internal::ordered_slots slots(placed, me.scratch);
+        for (;;) {
+          internal::buffer* into = slots.take(failed);  // before the block
+          if (into == nullptr) return;
+          const size_t i = next++;
+          if (i >= n || failed) break;
+          const size_t begin = block_start(i);
+          const size_t end = std::max(begin, block_start(i + 1));
+          if (begin != end) {
+            padded_string_view part(data + begin, end - begin, json.capacity() - begin);
+            ndjson_result r = ndjson(part, me.parser, me.headers, *into);
+            if (r.error) {
+              failed = true;
+              return;
+            }
+            counts[i] = r.count;
+          }
+          slots.converted(i, into);  // an empty block too, for the blocks after it
+        }
+        slots.flush(failed);
+      } catch (...) {  // std::bad_alloc: the others stop, we convert in one thread
+        failed = true;
+      }
     });
     if (failed) return false;
-    std::vector<internal::buffer*> buffers;
-    for (auto& w : workers) buffers.push_back(&w->out);
-    internal::gather(out, buffers, blocks, threads);
+    placed.finish(n);
     size_t documents = 0;
     for (size_t c : counts) documents += c;
     if (count != nullptr) *count += documents;

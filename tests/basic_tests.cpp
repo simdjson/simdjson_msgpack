@@ -480,6 +480,48 @@ static void test_allocator_lifetime() {
   jw.reset();
 }
 
+// On several threads, the output outgrows what we reserve (floats: 3 bytes of
+// JSON become 9 of MessagePack, and back to as many as 24), with an allocator
+// that keeps only the used bytes.
+static void test_threads_growing() {
+  const allocator strict{strict_reallocate, strict_deallocate, nullptr};
+  std::string ndjson;
+  for (int i = 0; i < 20000; i++) {
+    ndjson += "[1.5,2.5,3.5,0.1,-7.25,1e-7," + std::to_string(i) + ".5]\n";
+  }
+  simdjson::padded_string padded(ndjson);
+  msgpack_options one;
+  msgpack_options many;
+  many.threads = 8;
+  many.block_size = 4096;
+  msgpack_writer w1(one, strict), w8(many, strict);
+  CHECK(w1.write_ndjson(padded).ok());
+  CHECK(w8.write_ndjson(padded).ok());
+  CHECK(w1.view() == w8.view());
+  CHECK(w8.view().size() > padded.size());
+  // Floats with long representations: 9 bytes of MessagePack, 18 of JSON.
+  std::string long_floats;
+  for (int i = 0; i < 20000; i++) {
+    long_floats += "[0.1234567890123456,0.30000000000000004,-1.2345678901234567e-300," +
+                   std::to_string(i) + ".123456789]\n";
+  }
+  simdjson::padded_string padded_long(long_floats);
+  std::string mp;
+  CHECK(ndjson_to_msgpack(padded_long, &mp).ok());
+  json_options jone;
+  json_options jmany;
+  jmany.threads = 8;
+  jmany.block_size = 4096;
+  json_writer j1(jone, strict), j8(jmany, strict);
+  CHECK(j1.write_msgpack_stream(mp.data(), mp.size()).ok());
+  CHECK(j8.write_msgpack_stream(mp.data(), mp.size()).ok());
+  CHECK(j1.view() == j8.view());
+  CHECK(j8.view().size() > mp.size() * 3 / 2);
+  // Twice: the writers keep their buffers.
+  CHECK(j8.write_msgpack_stream(mp.data(), mp.size()).ok());
+  CHECK(j8.view().size() == 2 * j1.view().size());
+}
+
 static void test_c_api() {
   char* out = nullptr;
   size_t length = 0;
@@ -686,6 +728,7 @@ int main() {
   test_allocator();
   test_strict_allocator();
   test_allocator_lifetime();
+  test_threads_growing();
   test_c_api();
   test_random_round_trips();
   test_msgpack_mutations();

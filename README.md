@@ -214,8 +214,12 @@ With `threads` above one:
   writes blocks too. On error, we write again on one thread, for the same
   error.
 
-Each thread writes into its own buffer (kept by the writer between calls);
-we then copy the blocks, in order, in parallel.
+Each thread converts a block into a buffer of its own (it has four, kept by
+the writer between calls), publishes its size and goes on to the next block;
+as soon as the sizes of the blocks before it are known, the thread copies the
+block in place. So the output is written once in fresh memory (as with a new
+writer each time, or the buffer of a Python `bytes`), and no thread waits for
+the others unless its four buffers are full.
 
 ## Writing into your own buffer
 
@@ -360,12 +364,12 @@ socket up to 32 threads, then both sockets, in GB/s of JSON:
 | threads | JSON to MessagePack | MessagePack to JSON |
 |---|---|---|
 | 1 | 1.4 | 1.2 |
-| 2 | 2.3 | 1.7 |
-| 4 | 4.4 | 3.4 |
-| 8 | 7.8 | 4.5 |
-| 16 | 12.2 | 4.7 |
-| 32 | 16.7 | 4.0 |
-| 64 | 18.9 | 3.3 |
+| 2 | 2.4 | 1.8 |
+| 4 | 4.8 | 3.6 |
+| 8 | 7.8 | 5.1 |
+| 16 | 11.8 | 5.1 |
+| 32 | 16.7 | 4.3 |
+| 64 | 22.5 | 4.1 |
 
 Writing JSON from MessagePack stops scaling at about eight threads: one
 thread must find where the values end (MessagePack has no line ends) before

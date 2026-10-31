@@ -558,7 +558,9 @@ struct json_writer::impl {
   impl(const json_options& o, const allocator* a) : options(o), out(a) {}
   json_options options;
   internal::buffer out;
-  std::vector<std::unique_ptr<internal::buffer>> workers;  // kept between calls
+  // The buffers of each thread, in which it writes blocks before copying them
+  // in place (kept between calls).
+  std::vector<std::vector<std::unique_ptr<internal::buffer>>> workers;
 
   // Writes the values of p[0, length) as newline-delimited JSON at the end of
   // into; returns an empty string, or the error.
@@ -588,13 +590,19 @@ struct json_writer::impl {
     std::atomic<size_t> found{0};
     enum { finding, found_all, failed };
     std::atomic<int> state{finding};
+    std::atomic<bool> stop{false};  // state == failed
+    auto fail = [&] {
+      state.store(failed, std::memory_order_release);
+      stop.store(true, std::memory_order_release);
+    };
     const size_t threads = std::min(options.threads, max_blocks);
     if (workers.size() < threads) workers.resize(threads);
     for (auto& w : workers) {
-      if (!w) w.reset(new internal::buffer);
-      w->resize(0);
+      while (w.size() < internal::slots_per_thread) w.emplace_back(new internal::buffer);
     }
-    std::vector<internal::block_output> blocks(max_blocks);
+    // JSON is usually somewhat larger than its MessagePack.
+    out.reserve(length + length / 2);
+    internal::ordered_output placed(out, max_blocks);
     std::vector<size_t> counts(max_blocks, 0);
     std::atomic<size_t> next_block{0};
 
@@ -606,7 +614,7 @@ struct json_writer::impl {
         while (q < limit) {
           q = skip(q, end);
           if (q == nullptr) {
-            state.store(failed, std::memory_order_release);
+            fail();
             return;
           }
         }
@@ -616,49 +624,46 @@ struct json_writer::impl {
       state.store(found_all, std::memory_order_release);
     };
     auto write_blocks = [&](size_t w) {
-      for (;;) {
-        const size_t i = next_block++;
-        // Wait for block i to be known.
+      try {
+        internal::ordered_slots slots(placed, workers[w]);
         for (;;) {
-          if (found.load(std::memory_order_acquire) > i) break;
-          const int st = state.load(std::memory_order_acquire);
-          if (st == failed) return;
-          if (st == found_all) {
-            if (found.load(std::memory_order_acquire) > i) break;
+          internal::buffer* into = slots.take(stop);  // before the block
+          if (into == nullptr) return;
+          const size_t i = next_block++;
+          // Wait for block i to be known (the calling thread finds them).
+          bool known = false;
+          for (;;) {
+            if (found.load(std::memory_order_acquire) > i) {
+              known = true;
+              break;
+            }
+            const int st = state.load(std::memory_order_acquire);
+            if (st == failed) return;
+            if (st == found_all) {
+              known = found.load(std::memory_order_acquire) > i;
+              break;
+            }
+            std::this_thread::yield();
+          }
+          if (!known) break;
+          if (!stream(p + starts[i], starts[i + 1] - starts[i], *into, &counts[i]).empty()) {
+            fail();
             return;
           }
-          std::this_thread::yield();
+          slots.converted(i, into);
         }
-        if (state.load(std::memory_order_relaxed) == failed) return;
-        internal::buffer& mine = *workers[w];
-        const size_t offset = mine.size();
-        try {
-          if (!stream(p + starts[i], starts[i + 1] - starts[i], mine, &counts[i]).empty()) {
-            state.store(failed, std::memory_order_release);
-            return;
-          }
-        } catch (const std::bad_alloc&) {
-          state.store(failed, std::memory_order_release);
-          return;
-        }
-        blocks[i] = internal::block_output{w, offset, mine.size() - offset};
+        slots.flush(stop);
+      } catch (...) {  // std::bad_alloc
+        fail();
       }
     };
-    std::vector<std::thread> pool;
-    try {
-      pool.reserve(threads - 1);
-      for (size_t t = 1; t < threads; t++) pool.emplace_back(write_blocks, t);
-    } catch (...) {  // std::system_error or std::bad_alloc: fewer threads
-    }
-    find_blocks();
-    write_blocks(0);
-    for (std::thread& t : pool) t.join();
+    internal::run_threads(threads, [&](size_t w) {
+      if (w == 0) find_blocks();
+      write_blocks(w);
+    });
     if (state.load() == failed) return false;
     const size_t n = found.load();
-    blocks.resize(n);
-    std::vector<internal::buffer*> buffers;
-    for (auto& w : workers) buffers.push_back(w.get());
-    internal::gather(out, buffers, blocks, threads);
+    placed.finish(n);
     size_t values = 0;
     for (size_t i = 0; i < n; i++) values += counts[i];
     if (count != nullptr) *count += values;
