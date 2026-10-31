@@ -382,7 +382,7 @@ static void test_round_trip() {
   const char* docs[] = {
       R"({"id":12345,"name":"caf\u00e9 \"quoted\"","list":[1,-2,3.25,1e300,-1e-300,true,false,null],"nested":{"a":{"b":{"c":[[],{}]}}}})",
       R"([0,-0.0,0.5,123456789012,-123456789012,9223372036854775807,18446744073709551615])",
-      R"({"emoji":"😀","tab":"a\tb","ctl":"\u0001"})",
+      R"({"emoji":"\ud83d\ude00","tab":"a\tb","ctl":"\u0001"})",
   };
   for (const char* d : docs) {
     std::string mp = unhex(to_msgpack(d));
